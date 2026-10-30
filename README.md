@@ -6,4 +6,4 @@
 
 网站发布地址：https://speakey-study.github.io/
 
-内嵌词库、PDF 与 OCR 组件的许可和来源保留在 HTML 中。
+首页与资源分开加载，PDF 和扫描识别组件只在使用时下载。词库、PDF 与 OCR 组件的许可和来源保留在 HTML 中。
