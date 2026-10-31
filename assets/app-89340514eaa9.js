@@ -304,42 +304,41 @@
     function setReviewStatus(label,streak){setInfo('review-status',[label,'连续答对 '+streak+' / 2']);}
     function notice(message) { holdPracticeHeight();$('audio-notice').textContent=message; $('audio-notice').hidden=!message;queueAnswerVisibility(); }
     // A derived expression is an import role, never guessed from its spelling.
-    const derivativeChoice={keys:new Set(),include:true};
+    const derivativeChoice={keys:new Set()};
     const relatedChoice={include:true};
-    try{derivativeChoice.include=localStorage.getItem('speakey.include-derivatives.v1')!=='false';}catch{}
-    try{relatedChoice.include=localStorage.getItem('speakey.include-related.v1')!=='false';}catch{}
+    // One preference controls both kinds of optional expression. Preserve any
+    // previous opt-out when migrating the two old, independent preferences.
+    const relatedPreferenceKey='speakey.include-associated.v1';
+    try{
+      const saved=localStorage.getItem(relatedPreferenceKey);
+      relatedChoice.include=saved===null
+        ?localStorage.getItem('speakey.include-derivatives.v1')!=='false'&&localStorage.getItem('speakey.include-related.v1')!=='false'
+        :saved!=='false';
+      if(saved===null)localStorage.setItem(relatedPreferenceKey,String(relatedChoice.include));
+    }catch{}
     function isOptionalDerivative(entry,keys=derivativeChoice.keys){
-      return !entry.related?.length&&keys.has(normalize(entry.english));
+      return keys.has(normalize(entry.english));
     }
     function practiceWords(words=parseWords($('word-list').value).words,keys=derivativeChoice.keys){
-      return words.filter(entry=>(derivativeChoice.include||!isOptionalDerivative(entry,keys))&&(relatedChoice.include||!entry.variantIndex));
+      return words.filter(entry=>relatedChoice.include||(!isOptionalDerivative(entry,keys)&&!entry.variantIndex));
     }
     function setRelatedPreference(include){
       relatedChoice.include=!!include;
-      try{localStorage.setItem('speakey.include-related.v1',String(relatedChoice.include));}catch{}
+      try{localStorage.setItem(relatedPreferenceKey,String(relatedChoice.include));}catch{}
       updateCount();window.dispatchEvent(new Event('speakey-related-change'));
     }
     function renderRelatedChoice(words,prefix=''){
       $(prefix+'include-related').checked=relatedChoice.include;
-      $(prefix+'related-note').textContent=relatedChoice.include?'紧跟原词听写，同组关联词也适用':'只练每组第一项，完整词表保留';
+      $(prefix+'related-note').textContent=relatedChoice.include?'包含派生词和同义替换词':'只听写主词，完整词表保留';
     }
     function derivativeKeys(mainLines,derivedLines){
       const primary=new Set(parseWords(mainLines.join('\n')).words.map(entry=>normalize(entry.english)));
       return new Set(parseWords(derivedLines.join('\n')).words.map(entry=>normalize(entry.english)).filter(key=>!primary.has(key)));
     }
-    function setDerivativePreference(include){
-      derivativeChoice.include=!!include;
-      try{localStorage.setItem('speakey.include-derivatives.v1',String(derivativeChoice.include));}catch{}
-      updateCount();window.dispatchEvent(new Event('speakey-derivatives-change'));
-    }
-    function renderDerivativeChoice(words){
+    function renderPracticeChoice(words){
       renderRelatedChoice(words);
       const present=new Set(words.map(entry=>normalize(entry.english)));
       derivativeChoice.keys=new Set([...derivativeChoice.keys].filter(key=>present.has(key)));
-      const count=words.filter(entry=>isOptionalDerivative(entry)).length;
-      $('derivative-options').hidden=!count;$('include-derivatives').checked=derivativeChoice.include;
-      $('derivative-label').textContent='听写派生词（'+count+'）';
-      $('derivative-note').hidden=derivativeChoice.include;
     }
     function acceptPDFDerivatives(incomingWords,keys,replace){
       const current=parseWords($('word-list').value).words;
@@ -347,7 +346,6 @@
       const incomingPrimary=new Set(incomingWords.filter(entry=>!isOptionalDerivative(entry,keys)).map(entry=>normalize(entry.english)));
       derivativeChoice.keys=new Set([...(replace?[]:derivativeChoice.keys),...keys].filter(key=>!existingPrimary.has(key)&&!incomingPrimary.has(key)));
     }
-    $('include-derivatives').addEventListener('change',event=>setDerivativePreference(event.target.checked));
     $('include-related').addEventListener('change',event=>setRelatedPreference(event.target.checked));
     $('word-list').addEventListener('beforeinput',event=>{
       const field=event.currentTarget;
@@ -357,7 +355,7 @@
     function updateCount(){
       const cleanedList=cleanWordListSeparators($('word-list').value);
       if(cleanedList!==$('word-list').value)$('word-list').value=cleanedList;
-      const parsed=parseWords($('word-list').value);renderDerivativeChoice(parsed.words);
+      const parsed=parseWords($('word-list').value);renderPracticeChoice(parsed.words);
       const words=practiceWords(parsed.words),groups=new Set(words.map(entry=>entry.groupId)).size,{skipped,changes}=parsed;
       $('word-count').textContent=words.length;$('start').disabled=!words.length;
       $('group-count').hidden=groups===words.length;$('group-count').textContent=groups+' 组';
@@ -1182,7 +1180,6 @@
     el('pdf-pick').disabled=value; el('pdf-file').disabled=value;
     el('pdf-preview').disabled=value; el('pdf-apply').disabled=value;
     el('pdf-rescan').disabled=value; el('pdf-cancel').textContent=value?'取消识别':'关闭';
-    el('pdf-include-derivatives').disabled=value;
     el('pdf-include-related').disabled=value;
     el('word-list').readOnly=value;el('sample').disabled=value;
     el('pdf-panel').setAttribute('aria-busy',String(value));
@@ -1212,11 +1209,7 @@
   function previewCount() {
     const parsed=parseWords(el('pdf-preview').value);
     renderRelatedChoice(parsed.words,'pdf-');
-    const count=parsed.words.filter(entry=>isOptionalDerivative(entry,pdfDerivedKeys)).length;
     const selected=practiceWords(parsed.words,pdfDerivedKeys);
-    el('pdf-derivative-options').hidden=!count;el('pdf-include-derivatives').checked=derivativeChoice.include;
-    el('pdf-derivative-label').textContent='听写派生词（'+count+'）';
-    el('pdf-derivative-note').hidden=derivativeChoice.include;
     el('pdf-preview-count').textContent=selected.length+' 项听写'+(selected.length!==parsed.words.length?' / 共 '+parsed.words.length+' 项':'');
     el('pdf-apply').disabled=!!active || !parsed.words.length;
   }
@@ -1411,7 +1404,7 @@
     el('setup').classList.add('pdf-open');
     el('pdf-panel').hidden=false;el('pdf-preview-wrap').hidden=true;el('pdf-rescan').hidden=true;
     el('pdf-file-name').textContent=file.name;el('pdf-preview').value='';el('pdf-result-note').textContent='';
-    pdfDerivedKeys.clear();el('pdf-derivative-options').hidden=true;
+    pdfDerivedKeys.clear();
     el('pdf-review').hidden=true;el('pdf-review-list').textContent='';
     el('pdf-replace').checked=false;busy(true);status(job,'正在读取 PDF…');
     el('pdf-panel').scrollIntoView({block:'nearest'});
@@ -1468,9 +1461,7 @@
   el('pdf-file').addEventListener('change',event=>{const file=event.target.files[0];event.target.value='';importPDF(file);});
   el('pdf-cancel').addEventListener('click',cancel);
   el('pdf-preview').addEventListener('input',previewCount);
-  el('pdf-include-derivatives').addEventListener('change',event=>setDerivativePreference(event.target.checked));
   el('pdf-include-related').addEventListener('change',event=>setRelatedPreference(event.target.checked));
-  window.addEventListener('speakey-derivatives-change',previewCount);
   window.addEventListener('speakey-related-change',previewCount);
   el('pdf-rescan').addEventListener('click',()=>importPDF(lastFile,true));
   el('pdf-apply').addEventListener('click',()=>{
