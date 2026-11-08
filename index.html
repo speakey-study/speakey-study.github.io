@@ -1648,19 +1648,30 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
   var originalJSON=SpeaKeyAssets.json;
   SpeaKeyAssets.json=function(id){return dictionaries[id]||originalJSON.call(this,id);};
   SpeaKeyAssets.bytes=function(name){if(!binary[name])throw Error('Resource not loaded: '+name);return binary[name];};
-  async function download(path,signal){
+  async function download(path,signal,onProgress){
     for(var attempt=0;attempt<2;attempt++){
-      var controller=new AbortController(),timer=setTimeout(function(){controller.abort();},20000);
+      var controller=new AbortController(),timer,deadline;
+      var resetIdle=function(ms){clearTimeout(timer);timer=setTimeout(function(){controller.abort();},ms||20000);};
+      resetIdle(45000);deadline=setTimeout(function(){controller.abort();},180000);
       var cancel=function(){controller.abort();};
-      if(signal){if(signal.aborted){clearTimeout(timer);throw new DOMException('Cancelled','AbortError');}signal.addEventListener('abort',cancel,{once:true});}
+      if(signal){if(signal.aborted){clearTimeout(timer);clearTimeout(deadline);throw new DOMException('Cancelled','AbortError');}signal.addEventListener('abort',cancel,{once:true});}
       try{
         var response=await fetch(path,{signal:controller.signal,cache:attempt?'reload':'default'});
         if(!response.ok)throw Error('HTTP '+response.status);
-        return new Uint8Array(await response.arrayBuffer());
+        if(!response.body||!response.body.getReader){resetIdle(120000);return new Uint8Array(await response.arrayBuffer());}
+        var reader=response.body.getReader(),chunks=[],total=0;
+        resetIdle();
+        while(true){
+          var chunk=await reader.read();if(chunk.done)break;
+          resetIdle();chunks.push(chunk.value);total+=chunk.value.length;
+          if(onProgress)onProgress(total);
+        }
+        var result=new Uint8Array(total),offset=0;
+        chunks.forEach(function(chunk){result.set(chunk,offset);offset+=chunk.length;});return result;
       }catch(error){
         if(signal&&signal.aborted)throw error;
         if(attempt===1){var failure=Error('Resource download failed');failure.name='NetworkAssetError';throw failure;}
-      }finally{clearTimeout(timer);if(signal)signal.removeEventListener('abort',cancel);}
+      }finally{clearTimeout(timer);clearTimeout(deadline);if(signal)signal.removeEventListener('abort',cancel);}
     }
   }
   SpeaKeyAssets.ensure=async function(names,signal){
@@ -1676,7 +1687,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     try{
       await Promise.all(Object.keys(manifest.dictionaries).map(async function(id){
         if(dictionaries[id])return;
-        var bytes=await download(manifest.dictionaries[id]);
+        var bytes=await download(manifest.dictionaries[id],null,id==='offline-dictionary'?function(loaded){label.textContent='正在准备词库，已加载 '+(loaded/1048576).toFixed(1)+' MB…';}:null);
         dictionaries[id]=JSON.parse(pako.ungzip(bytes,{to:'string'}));
       }));
       label.textContent='正在启动听写…';
